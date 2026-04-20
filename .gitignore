@@ -1,0 +1,12 @@
+# 编译生成的二进制文件和目标文件
+anasche
+*.o
+
+# eBPF 自动生成的 skeleton 头文件
+*.skel.h
+
+# 运行监控生成的数据文件
+*.csv
+
+# Python 缓存
+__pycache__/
