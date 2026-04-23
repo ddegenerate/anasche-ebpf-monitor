@@ -22,12 +22,12 @@ struct {
 //sched_wakeup_new 当一个新创建的进程准备好运行
 //sched_switch cpu从一个进程切换到另一个进程时触发
 const volatile unsigned long long min_duration_ns = 0;
-
+const volatile int targ_pid = 0;
 SEC("raw_tp/sched_wakeup") //原始跟踪点程序，挂载到sched_wakeup这一个跟踪点   相较于普通的tracepoint，带raw的不作任何打包，减小性能损耗，因为这个触发很频繁
 int BPF_PROG(handle_sched_wakeup,struct task_struct *p)    //对应的上下文格式去vmlinux.h文件里面对应查，因为是void *ctx，所以这里直接用PROG宏
 {
     u32 sw_pid=BPF_CORE_READ(p,pid);//安全读取进程指针中的进程id
-	if(!sw_pid)
+	if(!sw_pid|| (targ_pid != 0 && sw_pid != targ_pid))  //加上拦截指定pid的逻辑
 		return 0;
 	u64 sw_time=bpf_ktime_get_ns(); //获取当前系统时间，精确到ns
 	bpf_map_update_elem(&start,&sw_pid,&sw_time,BPF_ANY);  //对应存进哈希表中，键为进程id，值为唤醒时间
@@ -38,7 +38,7 @@ SEC("raw_tp/sched_wakeup_new")
 int BPF_PROG(handle_sched_wakeup_new,struct task_struct *p)
 {
 	u32 swn_pid=BPF_CORE_READ(p,pid);
-    if(!swn_pid)
+    if(!swn_pid || (targ_pid != 0 && swn_pid != targ_pid))
 		return 0;
 	u64 swn_time=bpf_ktime_get_ns(); 
 	bpf_map_update_elem(&start,&swn_pid,&swn_time,BPF_ANY); //基本一模一样写了一遍
@@ -51,12 +51,15 @@ int BPF_PROG(handle_sched_switch,bool preempt, struct task_struct *prev, struct 
 	if(prev_state==0)  //之前的进程被抢占
 	{
 		u32 prev_pid=BPF_CORE_READ(prev,pid);
-		if(!prev_pid)
-		    return 0;
-		u64 swich_prev_time=bpf_ktime_get_ns();
-		bpf_map_update_elem(&start,&prev_pid,&swich_prev_time,BPF_ANY);   //被抢占的进程以及抢占时间存进哈希表
+		if(prev_pid && (targ_pid == 0 || prev_pid == targ_pid)) //修复了原来的一个逻辑漏洞并加上了目标过滤
+		{
+			u64 swich_prev_time=bpf_ktime_get_ns();
+			bpf_map_update_elem(&start,&prev_pid,&swich_prev_time,BPF_ANY);   //被抢占的进程以及抢占时间存进哈希表
+		}
 	}
     u32 next_pid=BPF_CORE_READ(next,pid); //读要进来的进程pid
+	if (targ_pid != 0 && next_pid != targ_pid)  //不是需要的pid别查表了，节省点性能
+        return 0;
 	u64 *pre_pro_time=bpf_map_lookup_elem(&start,&next_pid);//去查找之前排队的时间 注意查找返回的是指针
 	if(!pre_pro_time)
 	    return 0;

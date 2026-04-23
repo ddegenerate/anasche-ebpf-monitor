@@ -11,7 +11,6 @@ from rich.text import Text
 # ---- 1. 数据与文件配置 ----
 # 存储最近的 15 条调度记录
 recent_events = deque(maxlen=15)
-
 # 细化的 1ms - 10ms 统计区间（针对科研实测优化）
 buckets = {
     "< 5 us": 0,
@@ -48,52 +47,51 @@ def generate_layout():
     # --- 左侧：高精度直方图 ---
     hist_table = Table(show_header=False, box=None, expand=True)
     hist_table.add_column("Bucket", style="cyan", justify="right", width=15)
-    hist_table.add_column("Bar", style="blue")
-    hist_table.add_column("Count", justify="left", width=10)
-
+    hist_table.add_column("Bar", style="blue", no_wrap=True) 
+    hist_table.add_column("Count", justify="left", width=18) 
     # 找出除了长尾桶之外的最大值，避免长尾数据压平其他柱子
     normal_values = list(buckets.values())[:-1]
     max_count = max(normal_values) if any(normal_values) else (buckets["> 5 ms"] or 1)
-    
-    max_bar_width = 40 
+    max_bar_width = 32 
     fractional_blocks = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"]
-
+    # 获取当前总数，用来计算百分比
+    current_total = stats['total']
     for b_name, count in buckets.items():
         proportion = count / max_count
         total_eighths = int(proportion * max_bar_width * 8)
         full_blocks = min(total_eighths // 8, max_bar_width)
         remainder = total_eighths % 8 if full_blocks < max_bar_width else 0
-        
         bar_string = "█" * full_blocks + fractional_blocks[remainder]
-        
-        # 毫秒级变色逻辑：1-4ms 黄色，5ms+ 红色
+        # 计算百分比并格式化显示
+        if current_total > 0:
+            pct = (count / current_total) * 100
+            # [dim] 会让百分比的颜色稍微变暗，突出前面的绝对数值
+            count_str = f"{count} [dim]({pct:.1f}%)[/dim]" 
+        else:
+            count_str = f"{count} [dim](0.0%)[/dim]"
+        # 1-4ms 黄色，5ms+ 红色
         color = "green" if any(x in b_name for x in ["< 5 us","5 - 10 us","10 - 30 us", "30 - 50 us"]) else ("red" if any(x in b_name for x in ["1 - 5 ms", "> 5 ms"]) else "yellow")
         bar = f"[{color}]{bar_string}[/]"
-        hist_table.add_row(b_name, bar, str(count))
-
+        hist_table.add_row(b_name, bar, count_str)
     # --- 右侧：实时日志 ---
     log_table = Table(show_header=True, header_style="bold magenta", expand=True)
     log_table.add_column("Time", width=10)
     log_table.add_column("PID", justify="right", style="dim", width=8)
     log_table.add_column("COMM", style="cyan")
     log_table.add_column("Delay(us)", justify="right", style="bold")
-
     for ev in reversed(recent_events):
         d_val = ev['delay']
         d_str = f"[red]{d_val}[/]" if d_val > 5000 else (f"[yellow]{d_val}[/]" if d_val > 1000 else f"[green]{d_val}[/]")
         log_table.add_row(ev['time'], ev['pid'], ev['comm'], d_str)
-
     layout = Layout()
     layout.split_column(Layout(name="header", size=3), Layout(name="main"))
     layout["main"].split_row(
         Layout(Panel(hist_table, title="[bold white]调度延迟分布[/]"), ratio=1),
         Layout(Panel(log_table, title="[bold white]实时日志[/]"), ratio=1)
     )
-    
     status_msg = f" 🟢 正在记录至: {LOG_FILE_NAME} | 总数: {stats['total']}"
     layout["header"].update(Panel(Text(status_msg, style="bold white on blue", justify="center")))
     return layout
-
 # ---- 2. 运行主循环 ----
 if __name__ == "__main__":
     # 打开文件并写入 CSV 头
@@ -105,18 +103,14 @@ if __name__ == "__main__":
                 for line in sys.stdin:
                     line = line.strip()
                     if not line or "timestamp" in line: continue
-                    
                     # 写入原始数据到文件
                     f.write(line + "\n")
                     f.flush()
-
                     try:
                         parts = line.split(',')
                         if len(parts) != 4: continue
-                        
                         ts, pid, comm, delay_us = int(parts[0]), parts[1], parts[2], int(parts[3])
                         time_str = datetime.fromtimestamp(ts).strftime('%H:%M:%S')
-
                         stats['total'] += 1
                         if delay_us > stats['max_delay']: stats['max_delay'] = delay_us
                         
