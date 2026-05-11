@@ -297,6 +297,8 @@ Dual BSD/GPL
 ---
 
 ## 联系方式
+- 邮箱：<ZY2502205@buaa.edu.cn>
 
-- 作者邮箱：<ZY2502205@buaa.edu.cn>
-- 问题反馈：请在 GitHub Issues 中提交
+## 前面开发和运行效果是在windows下的wsl虚拟机进行，下面是在本地双系统Ubuntu24.04虚拟机下的运行结果
+<img width="1610" height="646" alt="图片" src="https://github.com/user-attachments/assets/25ed4672-fcb6-451e-9307-64f9300257d0" />
+
