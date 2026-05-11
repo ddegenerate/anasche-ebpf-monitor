@@ -85,11 +85,6 @@ static void sig_handler(int sig)
 static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct event *e=data; //定义结构体准备接收数据
-	//进程名过滤放用户态来做
-	if (env.target_commd[0] != '\0' && strncmp(e->comm, env.target_commd, 16) != 0)  //目标command不为0且接手过来的command不是要的command，直接return 0
-	{
-        return 0;
-    }
 	time_t now=time(NULL); //获取当前时间戳
 	printf("%ld,%u,%s,%llu\n",now,e->pid,e->comm,e->que_time/1000); //当前时间，进程id，进程名，排队时间，前面是ns，这里除以1000转成us
 	fflush(stdout);
@@ -123,21 +118,36 @@ int main(int argc, char **argv)
 	//打开BPFskel
 	skel = anasche_bpf__open();
 	if (!skel) {
-		fprintf(stderr, "Failed to open and load BPF skeleton\n");
+		fprintf(stderr, "无法打开 BPF skeleton\n");
 		return 1;
 	}
 	skel->rodata->targ_pid = env.target_pid;
+
+	// 如果指定了进程名，启用内核态过滤
+	if (env.target_commd[0] != '\0') {
+		skel->rodata->filter_by_comm = true;
+	}
+
 	//加载验证
 	err = anasche_bpf__load(skel);
 	if (err) {
-		fprintf(stderr, "Failed to load and verify BPF skeleton\n");
+		fprintf(stderr, "无法加载并验证 BPF skeleton\n");
 		goto cleanup;
+	}
+
+	// 将目标进程名写入内核态 Map
+	if (env.target_commd[0] != '\0') {
+		__u8 val = 1;
+		if (bpf_map__update_elem(skel->maps.target_comms, env.target_commd, sizeof(env.target_commd), &val, sizeof(val), BPF_ANY) != 0) {
+			fprintf(stderr, "无法设置进程名过滤\n");
+			goto cleanup;
+		}
 	}
 
 	//挂载到追踪点
 	err = anasche_bpf__attach(skel);
 	if (err) {
-		fprintf(stderr, "Failed to attach BPF skeleton\n");
+		fprintf(stderr, "无法挂载 BPF skeleton\n");
 		goto cleanup;
 	}
 
@@ -145,7 +155,7 @@ int main(int argc, char **argv)
 	rb = ring_buffer__new(bpf_map__fd(skel->maps.ring), handle_event, NULL, NULL);
 	if (!rb) {
 		err = -1;
-		fprintf(stderr, "Failed to create ring buffer\n");
+		fprintf(stderr, "无法创建环形缓冲区\n");
 		goto cleanup;
 	}
 	//打印csv表头
@@ -160,7 +170,7 @@ int main(int argc, char **argv)
 			break;
 		}
 		if (err < 0) {
-			printf("Error polling ring buffer: %d\n", err);
+			printf("轮询环形缓冲区出错: %d\n", err);
 			break;
 		}
 	}

@@ -21,5 +21,8 @@ $(APP): $(USER_C) $(SKEL_H) anasche.h
 	gcc -g -O2 -Wall $(USER_C) -o $(APP) -lbpf -lelf -lz
 
 # 清理编译产生的临时文件
+run: $(APP)
+	sudo -v && sudo ./$(APP) $(ARGS) | python3 dash.py
+
 clean:
 	rm -f $(APP) $(BPF_OBJ) $(SKEL_H)
